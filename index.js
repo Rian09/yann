@@ -11,7 +11,7 @@ const logger = pino({ level: "silent" });
 // ==============================
 // KONFIGURASI
 // ==============================
-const ADMIN_NUMBER = "628XXXXXXXXXX"; // GANTI dengan nomor admin, contoh: 6281234567890
+const ADMIN_NUMBER = "6281266602031"; // GANTI dengan nomor admin, contoh: 6281234567890
 const DATA_FILE = "./data/laporan.json";
 
 if (!fs.existsSync("./data")) fs.mkdirSync("./data", { recursive: true });
