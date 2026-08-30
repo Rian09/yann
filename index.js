@@ -1,275 +1,154 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason
-} from "@whiskeysockets/baileys";
-import qrcode from "qrcode-terminal";
-import pino from "pino";
-import fs from "fs";
+const { Client, LocalAuth, Buttons, List } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 
-const logger = pino({ level: "silent" });
+const client = new Client({
+  authStrategy: new LocalAuth({ clientId: 'yonif-tp-953' }),
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  }
+});
 
-// ==============================
-// KONFIGURASI
-// ==============================
-const ADMIN_NUMBER = "6281266602031"; // GANTI dengan nomor admin, contoh: 6281234567890
-const DATA_FILE = "./data/laporan.json";
+const sessions = new Map();
+const welcome = `*🇮🇩 SELAMAT DATANG DI PORTAL PENGADUAN DAN ASPIRASI MASYARAKAT
+YONIF TP 953/HARIMAU RAWA 🇮🇩*
 
-if (!fs.existsSync("./data")) fs.mkdirSync("./data", { recursive: true });
-if (!fs.existsSync(DATA_FILE)) fs.writeFileSync(DATA_FILE, "[]");
-
-const welcomeMessage = `*🇮🇩 SELAMAT DATANG DI PORTAL PENGADUAN DAN ASPIRASI MASYARAKAT*
-*YONIF TP 953/HARIMAU RAWA 🇮🇩*
-
-Portal ini merupakan sarana komunikasi masyarakat untuk menyampaikan laporan, pengaduan, informasi, serta aspirasi. Kami akan menerima dan menindaklanjutinya sesuai ketentuan yang berlaku.
+Portal ini merupakan sarana komunikasi masyarakat untuk menyampaikan laporan, pengaduan, informasi, serta aspirasi. Kami akan menerima dan menindaklanjutinya sesuai ketentuan yang berlaku
 
 *Apakah ada yang bisa kami bantu?*`;
 
-const menuText = `*📋 MENU LAYANAN MASYARAKAT*
+const menuText = `📋 *MENU LAYANAN MASYARAKAT*
 
-Silakan pilih layanan yang Anda butuhkan melalui menu di bawah.
+Silakan pilih layanan yang Anda butuhkan:
 
-🇮🇩 *YONIF TP 953/HARIMAU RAWA*`;
+1️⃣ *BUAT PENGADUAN*
+2️⃣ *ASPIRASI MASYARAKAT*
+3️⃣ *INFORMASI*
+4️⃣ *CEK STATUS PENGADUAN*
+5️⃣ *KONTAK PETUGAS*
+6️⃣ *BANTUAN*
 
-const menuSections = [{
-  title: "LAYANAN MASYARAKAT",
-  rows: [
-    { title: "📢 Pengaduan Masyarakat", rowId: "menu_pengaduan", description: "Sampaikan pengaduan atau keluhan." },
-    { title: "💬 Aspirasi Masyarakat", rowId: "menu_aspirasi", description: "Sampaikan aspirasi dan usulan." },
-    { title: "📝 Laporan", rowId: "menu_laporan", description: "Kirim laporan kejadian/informasi." },
-    { title: "ℹ️ Informasi", rowId: "menu_informasi", description: "Dapatkan informasi pelayanan." },
-    { title: "💡 Saran & Masukan", rowId: "menu_saran", description: "Berikan kritik, saran dan masukan." },
-    { title: "👮 Hubungi Petugas", rowId: "menu_petugas", description: "Hubungi petugas pelayanan." }
-  ]
-}];
+Balas dengan angka *1–6*.`;
 
-const sessions = new Map();
-
-function getData() {
-  try { return JSON.parse(fs.readFileSync(DATA_FILE, "utf8")); }
-  catch { return []; }
-}
-function saveData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-function ticket() {
-  return "Y953-" + Date.now().toString().slice(-8);
-}
-
-async function sendMainMenu(sock, jid) {
-  await sock.sendMessage(jid, { text: menuText });
-  // List message. Baileys/WhatsApp client support can vary by version.
-  await sock.sendMessage(jid, {
-    text: "Tekan tombol di bawah untuk membuka daftar layanan.",
-    footer: "YONIF TP 953/HARIMAU RAWA",
-    title: "📋 MENU LAYANAN",
-    buttonText: "BUKA MENU",
-    sections: menuSections
-  });
-}
-
-async function sendWelcome(sock, jid) {
-  await sock.sendMessage(jid, { text: welcomeMessage });
-  await new Promise(r => setTimeout(r, 700));
-  await sendMainMenu(sock, jid);
-}
-
-async function handleSelection(sock, jid, id) {
-  const replies = {
-    menu_pengaduan: `*📢 PENGADUAN MASYARAKAT*
-
-Silakan kirim pengaduan Anda.
-
-Format yang disarankan:
-*Nama:*
-*Alamat:*
-*No. HP:*
-*Isi Pengaduan:*
-*Lokasi Kejadian:*
-*Waktu Kejadian:*
-
-Jika ada foto/video/dokumen pendukung, silakan lampirkan.
-
-Ketik *SELESAI* setelah semua data dikirim.
-Ketik *MENU* untuk kembali ke menu utama.`,
-
-    menu_aspirasi: `*💬 ASPIRASI MASYARAKAT*
-
-Silakan sampaikan aspirasi, harapan, atau usulan Anda secara jelas.
-
-Ketik *MENU* untuk kembali ke menu utama.`,
-
-    menu_laporan: `*📝 LAYANAN LAPORAN*
-
-Silakan kirim laporan kejadian atau informasi yang ingin disampaikan.
-
-Mohon sertakan lokasi, waktu kejadian, uraian kejadian, dan bukti pendukung jika ada.
-
-Ketik *MENU* untuk kembali ke menu utama.`,
-
-    menu_informasi: `*ℹ️ INFORMASI PELAYANAN*
-
-Silakan tuliskan pertanyaan atau informasi yang ingin Anda ketahui.
-
-Ketik *MENU* untuk kembali ke menu utama.`,
-
-    menu_saran: `*💡 SARAN & MASUKAN*
-
-Silakan sampaikan kritik, saran, atau masukan Anda untuk peningkatan pelayanan.
-
-Ketik *MENU* untuk kembali ke menu utama.`,
-
-    menu_petugas: `*👮 HUBUNGI PETUGAS*
-
-Silakan tuliskan keperluan Anda. Pesan akan diteruskan kepada petugas.
-
-Ketik *MENU* untuk kembali ke menu utama.`
-  };
-
-  if (replies[id]) {
-    sessions.set(jid, { type: id });
-    await sock.sendMessage(jid, { text: replies[id] });
-    return true;
+async function sendMenu(msg) {
+  // Buttons/List support varies by WhatsApp Web/client version.
+  // If interactive messages are unavailable, numbered replies still work.
+  try {
+    const buttons = new Buttons(
+      menuText,
+      [
+        { body: '1️⃣ Buat Pengaduan' },
+        { body: '2️⃣ Aspirasi' },
+        { body: '3️⃣ Informasi' }
+      ],
+      'Portal YONIF TP 953',
+      'Pilih layanan'
+    );
+    await msg.reply(buttons);
+    await msg.reply('➡️ Untuk layanan 4–6, balas angka *4*, *5*, atau *6*.');
+  } catch {
+    await msg.reply(menuText);
   }
-  return false;
 }
 
-async function connect() {
-  const { state, saveCreds } = await useMultiFileAuthState("./auth_info");
-
-  const sock = makeWASocket({
-    auth: state,
-    logger,
-    browser: ["Yonif TP 953", "Chrome", "1.0.0"],
-    markOnlineOnConnect: false
-  });
-
-  sock.ev.on("creds.update", saveCreds);
-
-  sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      console.log("\nSCAN QR WHATSAPP:\n");
-      qrcode.generate(qr, { small: true });
-    }
-    if (connection === "open") console.log("\n✅ BOT YONIF TP 953 AKTIF\n");
-    if (connection === "close") {
-      const code = lastDisconnect?.error?.output?.statusCode;
-      if (code !== DisconnectReason.loggedOut) {
-        console.log("Koneksi terputus, mencoba menyambung kembali...");
-        setTimeout(connect, 2000);
-      } else {
-        console.log("Session logout. Hapus folder auth_info lalu jalankan kembali.");
-      }
-    }
-  });
-
-  sock.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages?.[0];
-    if (!msg?.message || msg.key.fromMe) return;
-
-    const jid = msg.key.remoteJid;
-    if (!jid || jid === "status@broadcast") return;
-
-    const text = (
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.listResponseMessage?.singleSelectReply?.selectedRowId ||
-      msg.message.buttonsResponseMessage?.selectedButtonId ||
-      msg.message.templateButtonReplyMessage?.selectedId ||
-      ""
-    ).trim();
-
-    if (!text) return;
-    const lower = text.toLowerCase();
-
-    console.log(`[${jid}] ${text}`);
-
-    // Perintah utama
-    if (["menu", "start", "/start", "halo", "hai", "hello"].includes(lower)) {
-      sessions.delete(jid);
-      await sendWelcome(sock, jid);
-      return;
-    }
-
-    // Pilihan list
-    if (await handleSelection(sock, jid, text)) return;
-
-    // Angka 1-6 sebagai fallback
-    const numeric = {
-      "1": "menu_pengaduan",
-      "2": "menu_aspirasi",
-      "3": "menu_laporan",
-      "4": "menu_informasi",
-      "5": "menu_saran",
-      "6": "menu_petugas"
-    };
-    if (numeric[lower]) {
-      await handleSelection(sock, jid, numeric[lower]);
-      return;
-    }
-
-    const session = sessions.get(jid);
-
-    // Kumpulkan pesan untuk layanan yang dipilih
-    if (session) {
-      if (lower === "selesai") {
-        const data = getData();
-        const nomor = ticket();
-        const record = {
-          tiket: nomor,
-          pengirim: jid,
-          layanan: session.type,
-          isi: session.messages || [],
-          waktu: new Date().toISOString()
-        };
-        data.push(record);
-        saveData(data);
-
-        await sock.sendMessage(jid, {
-          text: `*✅ PESAN TELAH DITERIMA*
-
-Nomor tiket: *${nomor}*
-
-Terima kasih. Pesan Anda telah diterima dan akan ditindaklanjuti sesuai ketentuan yang berlaku.
-
-Ketik *MENU* untuk kembali ke menu utama.`
-        });
-
-        // Kirim notifikasi ringkas ke admin jika nomor sudah dikonfigurasi
-        if (!ADMIN_NUMBER.includes("X")) {
-          const summary = (record.isi || []).join("\n\n");
-          await sock.sendMessage(ADMIN_NUMBER + "@s.whatsapp.net", {
-            text: `*📥 LAPORAN BARU - ${nomor}*
-
-Layanan: ${session.type}
-Pengirim: ${jid}
-
-${summary}`
-          });
-        }
-
-        sessions.delete(jid);
-        return;
-      }
-
-      session.messages = session.messages || [];
-      session.messages.push(text);
-      sessions.set(jid, session);
-
-      await sock.sendMessage(jid, {
-        text: `✅ Pesan diterima.
-
-Silakan lanjutkan data Anda. Ketik *SELESAI* jika sudah selesai atau *MENU* untuk kembali.`
-      });
-      return;
-    }
-
-    // Jika tidak dikenali
-    await sock.sendMessage(jid, {
-      text: `❗ *PILIHAN TIDAK DIKENALI*
-
-Silakan ketik *MENU* untuk membuka menu layanan.`
-    });
-  });
+async function startChat(msg) {
+  await msg.reply(welcome);
+  await sendMenu(msg);
 }
 
-connect();
+async function handleChoice(msg, choice) {
+  const chatId = msg.from;
+
+  if (choice === '1') {
+    sessions.set(chatId, { type: 'pengaduan', step: 1, data: {} });
+    return msg.reply(`📝 *BUAT PENGADUAN*\n\nSilakan kirim *nama lengkap* Anda.`);
+  }
+  if (choice === '2') {
+    sessions.set(chatId, { type: 'aspirasi', step: 1, data: {} });
+    return msg.reply(`💡 *ASPIRASI MASYARAKAT*\n\nSilakan kirim *nama lengkap* Anda.`);
+  }
+  if (choice === '3') {
+    return msg.reply(`ℹ️ *INFORMASI PELAYANAN*\n\nLayanan ini menerima pengaduan, laporan, informasi, dan aspirasi masyarakat.\n\nUntuk kembali ke menu, kirim pesan apa saja.`);
+  }
+  if (choice === '4') {
+    return msg.reply(`🔎 *CEK STATUS PENGADUAN*\n\nSilakan kirim *nomor/tiket pengaduan* Anda.\n\nCatatan: versi tanpa database/admin belum dapat melakukan pencarian status secara nyata.`);
+  }
+  if (choice === '5') {
+    return msg.reply(`👮 *KONTAK PETUGAS*\n\nSilakan hubungi petugas pelayanan melalui nomor WhatsApp resmi yang ditetapkan oleh satuan.\n\nGanti teks ini dengan nomor/kontak resmi Anda.`);
+  }
+  if (choice === '6') {
+    return msg.reply(`❓ *BANTUAN*\n\nKetik angka:\n1️⃣ Pengaduan\n2️⃣ Aspirasi\n3️⃣ Informasi\n4️⃣ Cek Status\n5️⃣ Kontak Petugas\n6️⃣ Bantuan\n\nAnda tidak perlu mengetik kata “menu”.`);
+  }
+  return sendMenu(msg);
+}
+
+async function handleSession(msg, s) {
+  if (s.step === 1) {
+    s.data.nama = msg.body.trim();
+    s.step = 2;
+    return msg.reply('Silakan kirim *nomor HP yang dapat dihubungi*.');
+  }
+  if (s.step === 2) {
+    s.data.hp = msg.body.trim();
+    s.step = 3;
+    return msg.reply('Silakan tuliskan *isi pengaduan/aspirasi* Anda.');
+  }
+  if (s.step === 3) {
+    s.data.isi = msg.body.trim();
+    s.step = 4;
+    return msg.reply('Jika ada, kirim *lokasi/kejadian*. Jika tidak ada, balas *-*.');
+  }
+  if (s.step === 4) {
+    s.data.lokasi = msg.body.trim();
+    const kode = `953-${Date.now().toString().slice(-6)}`;
+    sessions.delete(msg.from);
+    return msg.reply(
+      `✅ *DATA TELAH DITERIMA*\n\n` +
+      `Nomor/Tiket: *${kode}*\n` +
+      `Nama: ${s.data.nama}\n` +
+      `HP: ${s.data.hp}\n` +
+      `Isi: ${s.data.isi}\n` +
+      `Lokasi: ${s.data.lokasi}\n\n` +
+      `Terima kasih. Simpan nomor tiket tersebut untuk referensi.`
+    );
+  }
+}
+
+client.on('qr', qr => {
+  console.log('\\nScan QR berikut menggunakan WhatsApp di HP Anda:\\n');
+  qrcode.generate(qr, { small: true });
+});
+
+client.on('ready', () => {
+  console.log('✅ Bot WhatsApp YONIF TP 953 siap digunakan.');
+});
+
+client.on('auth_failure', msg => console.error('❌ Autentikasi gagal:', msg));
+client.on('disconnected', reason => console.log('⚠️ WhatsApp terputus:', reason));
+
+client.on('message', async msg => {
+  if (msg.fromMe || msg.from.endsWith('@g.us') || msg.from === 'status@broadcast') return;
+
+  const text = msg.body.trim();
+  const existing = sessions.get(msg.from);
+
+  try {
+    // Jika sedang mengisi formulir, lanjutkan sesi.
+    if (existing) return await handleSession(msg, existing);
+
+    // Pesan pertama apa pun -> pembuka + menu.
+    const chat = await msg.getChat();
+    const lastMessages = await chat.fetchMessages({ limit: 5 });
+    const isFirstBotInteraction = !lastMessages.some(m => m.fromMe);
+
+    // Untuk memastikan menu selalu mudah diakses, angka 1-6 langsung diproses.
+    if (/^[1-6]$/.test(text)) return await handleChoice(msg, text);
+
+    await startChat(msg);
+  } catch (err) {
+    console.error(err);
+    await msg.reply('⚠️ Terjadi kesalahan. Silakan kirim pesan kembali.');
+  }
+});
+
+client.initialize();
